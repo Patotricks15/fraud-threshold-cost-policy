@@ -2,6 +2,17 @@
 
 **Question:** Which threshold minimizes expected loss under an alert budget?
 
+## Portfolio
+
+| ID | Repository | Focus |
+|---|---|---|
+| FD01 | [fraud-logistic-baseline](https://github.com/Patotricks15/fraud-logistic-baseline) | Logistic baseline |
+| FD02 | [fraud-cost-sensitive-xgboost](https://github.com/Patotricks15/fraud-cost-sensitive-xgboost) | Cost-sensitive XGBoost |
+| FD03 | [fraud-unsupervised-anomaly](https://github.com/Patotricks15/fraud-unsupervised-anomaly) | Isolation Forest and LOF |
+| FD04 | [fraud-velocity-graph-features](https://github.com/Patotricks15/fraud-velocity-graph-features) | Velocity and graph features (blocked) |
+| **FD05** | **fraud-threshold-cost-policy** (this repo) | Cost-based threshold policy |
+| FD06 | [fraud-drift-monitoring](https://github.com/Patotricks15/fraud-drift-monitoring) | Drift monitoring |
+
 ## Data
 
 - Input is `data/fd02_scores.csv`, exported by the FD02 repo (`fraud-cost-sensitive-xgboost`) from its Kaggle run. It holds validation and test rows only, never training rows.
