@@ -6,7 +6,7 @@
 
 - Input is `data/fd02_scores.csv`, exported by the FD02 repo (`fraud-cost-sensitive-xgboost`) from its Kaggle run. It holds validation and test rows only, never training rows.
 - Columns: `split` (`val` or `test`), `Time`, `Amount`, `Class`, `score` (uncalibrated XGBoost fraud probability from FD02).
-- The underlying data is Credit Card Fraud Detection, Kaggle `mlg-ulb/creditcardfraud` (real anonymized transactions, September 2013). The raw Kaggle file is not used here and is not downloaded to the workstation.
+- The underlying data is Credit Card Fraud Detection, Kaggle `mlg-ulb/creditcardfraud` (real anonymized transactions, September 2013). The raw file was downloaded through the Kaggle API to a local folder outside the repos, at the user's explicit request. It is not committed. License per Kaggle API: DbCL-1.0. This repo uses only the FD02 score export.
 - `Time` spans about two days, so monthly breakdowns are impossible. Alert rates are reported per 6-hour window instead.
 - See [data/README.md](data/README.md) for how to copy the FD02 export into place.
 
@@ -23,7 +23,7 @@ These assumptions were written before any threshold tuning code was run. They ar
 
 ## Method
 
-- **Calibration:** the uncalibrated FD02 score is wrapped in a score-passthrough estimator (`ScoreEstimator`, returns `[1 - s, s]`) and then `FrozenEstimator` + `CalibratedClassifierCV`. Calibrators are fitted on **validation rows only**. The method (`isotonic` or `sigmoid`) is chosen by validation Brier score only.
+- **Calibration:** two calibrators are fitted directly on the uncalibrated FD02 score: isotonic regression (`IsotonicRegression`, increasing, clipped to [0, 1]) and sigmoid (logistic regression on the logit of the score). Both use **validation rows only**. The method is chosen by validation Brier score only. An earlier version wrapped the score in `CalibratedClassifierCV`, which inverted the mapping on the real scores (frauds got low probabilities). That version was replaced, and a regression test now checks the direction.
 - **Threshold selection:** on validation only, over a grid of the unique calibrated probabilities plus the edges 0 and 1. The threshold minimizing `C(t)` is chosen among those with validation alert rate `<= 1%`. If no threshold meets the budget, the code raises an error.
 - **Test report (once):** the chosen threshold is applied to the test window. Reported: expected cost, alert rate, confusion matrix, recall of frauds by amount and by count, and alert rate by 6-hour window (labeled by window start).
 - **Naive comparison:** the same test metrics at the default threshold `t = 0.5` on calibrated probabilities, to show the effect of the policy.
@@ -31,31 +31,37 @@ These assumptions were written before any threshold tuning code was run. They ar
 
 ## Results
 
-Not yet produced. The FD02 export is not available on this workstation, so no numbers are reported. After the FD02 Kaggle run and the FD05 notebook run, fill in these tables from `reports/threshold_selection.csv` and `reports/policy_test_report.json`:
+Real run on the FD02 export (Kaggle data). Validation: 42,718 rows, 56 frauds. Test: 42,721 rows, 52 frauds, 6.0 h span.
 
-| Quantity (test window) | Policy (chosen `t`) | Naive (`t = 0.5`) |
+Calibration chosen on validation: **isotonic** (validation Brier 0.000270 vs 0.000309 for sigmoid). Chosen threshold on validation: **t = 0.0789** (validation alert rate 0.22%, validation expected cost 234.16).
+
+| Quantity (test window) | Policy (`t = 0.0789`) | Naive (`t = 0.5`) |
 |---|---|---|
-| Threshold | pending | 0.5 |
-| Expected cost | pending | pending |
-| Alert rate | pending | pending |
-| Recall by amount | pending | pending |
-| Recall by count | pending | pending |
+| Expected cost | **2,466.40** | **2,387.16** |
+| Alert rate (budget 1%) | 0.20% | 0.11% |
+| Alerts (FP) | 86 (47 FP) | 45 (7 FP) |
+| Frauds caught (TP / FN) | 39 / 13 | 38 / 14 |
+| Recall by amount | 0.615 | 0.615 |
+| Recall by count | 0.750 | 0.731 |
+| Missed fraud amount | 2,372.40 | 2,373.16 |
 
-| Calibration (test) | Brier |
-|---|---|
-| Raw FD02 score | pending |
-| Calibrated | pending |
+Brier on test: raw FD02 score 0.000453; calibrated (isotonic) 0.000394.
+
+Test alert rate by window: one 6-hour window (starting at Time 151,200 s), 86 alerts out of 42,721 transactions.
 
 ## Decision
 
-Pending the Kaggle run. The policy is adopted only if the test expected cost under the stated assumptions is lower than the naive `t = 0.5` cost and the alert rate stays within the budget.
+Under the decision rule above (adopt the policy only if its test expected cost is lower than the naive `t = 0.5` cost), **the policy is not adopted**. The validation-tuned threshold catches one more fraud (39 vs 38), but that fraud's amount is worth only about 0.76 in recovered loss, while the 40 extra false alerts add about 80 in review cost. The naive `t = 0.5` threshold is the better choice on this window under the stated costs. The naive threshold also stays within the 1% budget.
+
+This result depends on the assumed costs. If a false alert costs more than about 2.0 per alert, the naive threshold wins by more; if a missed fraud is worth substantially more than its amount, the lower threshold may win.
 
 ## Limitations
 
 - The cost parameters (`c_FP = 2.0` and `c_FN = Amount`) are assumed. Results change if the business team sets different costs.
 - The 1% alert budget is a policy choice, not an optimum.
-- The test window spans about two days. Threshold stability over time cannot be shown.
-- Calibration uses validation rows only, but the calibration method is chosen by Brier score on those same rows. Isotonic regression can overfit a small validation set, which would make the chosen method look better than it is on test.
+- The test window spans about six hours (one alert-rate window). Threshold stability over time cannot be shown.
+- The calibration method is chosen by Brier score on the same validation rows used to calibrate. The Brier gap between methods is small, so the choice is not reliable on this data.
+- Only 56 validation frauds and 52 test frauds exist. The threshold choice rests on very few positives, so the test difference (about 80 currency units) is within noise.
 - Scores come from FD02 and inherit its features and any leakage it has. This repo does not re-check them.
 
 ## Reproduce

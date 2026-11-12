@@ -7,13 +7,12 @@ Data is not committed. The input to this repo is an export from FD02, never the 
 | Input file | `data/fd02_scores.csv` (or any path set in `FD02_SCORES_PATH`) |
 | Produced by | FD02 repo `fraud-cost-sensitive-xgboost`, notebook run on Kaggle |
 | Upstream dataset | Kaggle `mlg-ulb/creditcardfraud` (Database Open License), read only inside the FD02 Kaggle run |
-| Retrieval | Not downloaded to the workstation. The FD02 export is copied in by hand |
+| Retrieval | Local copy downloaded with the Kaggle API to a folder outside the repos, at the user's explicit request (not committed). The FD05 notebook reads the FD02 export copied into `data/` |
 
 ## How to get the input
 
-1. Run the FD02 notebook on Kaggle (attach `mlg-ulb/creditcardfraud`, Run All).
-2. From the FD02 Kaggle notebook's Output tab, download `fd02_scores.csv`.
-3. Copy it to `data/fd02_scores.csv` in this repo, or set `FD02_SCORES_PATH` to its location.
+1. Run the FD02 notebook (`FRAUD_DATA_PATH` set to the local copy of `creditcard.csv`, or the Kaggle path inside Kaggle).
+2. Copy `fd02_scores.csv` from the FD02 repo's `data/` folder to `data/fd02_scores.csv` in this repo, or set `FD02_SCORES_PATH` to its location.
 
 ## Schema
 

@@ -1,15 +1,22 @@
-"""Calibrate the FD02 uncalibrated score on validation rows only."""
+"""Calibrate the FD02 uncalibrated score on validation rows only.
+
+Isotonic and sigmoid (Platt) calibrators are fitted directly on the score. The sigmoid
+method fits a logistic regression on the logit of the score, because scores span many
+orders of magnitude near 0.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.frozen import FrozenEstimator
+from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 
 from fraud_threshold_policy.metrics import brier
 
 CALIBRATION_METHODS = ("isotonic", "sigmoid")
+_EPS = 1e-9
 
 
 def _score_column(X) -> np.ndarray:
@@ -18,28 +25,27 @@ def _score_column(X) -> np.ndarray:
     if arr.ndim == 2 and arr.shape[1] == 1:
         arr = arr[:, 0]
     if arr.ndim != 1:
-        raise ValueError("ScoreEstimator expects a single score column")
+        raise ValueError("calibration expects a single score column")
     if arr.size == 0:
-        raise ValueError("ScoreEstimator received no scores")
+        raise ValueError("calibration received no scores")
     if not np.isfinite(arr).all() or ((arr < 0) | (arr > 1)).any():
-        raise ValueError("ScoreEstimator scores must be finite and within [0, 1]")
+        raise ValueError("calibration scores must be finite and within [0, 1]")
     return arr
 
 
-class ScoreEstimator(BaseEstimator, ClassifierMixin):
-    """Pass a single probability-like score through as P(fraud). Nothing is learned."""
+@dataclass(frozen=True)
+class Calibrator:
+    """A fitted map from raw FD02 score to P(fraud)."""
 
-    def fit(self, X, y=None):
-        _score_column(X)
-        self.classes_ = np.array([0, 1])
-        return self
+    method: str
+    model: object
 
-    def predict_proba(self, X) -> np.ndarray:
-        s = _score_column(X)
-        return np.column_stack([1.0 - s, s])
-
-    def predict(self, X) -> np.ndarray:
-        return (_score_column(X) >= 0.5).astype(int)
+    def transform(self, scores) -> np.ndarray:
+        s = _score_column(scores)
+        if self.method == "isotonic":
+            return np.asarray(self.model.predict(s), dtype=float)
+        logit = np.log(np.clip(s, _EPS, 1 - _EPS) / (1 - np.clip(s, _EPS, 1 - _EPS)))
+        return self.model.predict_proba(logit.reshape(-1, 1))[:, 1]
 
 
 def _labels(y) -> np.ndarray:
@@ -53,29 +59,33 @@ def _labels(y) -> np.ndarray:
     return labels.astype(int)
 
 
-def fit_calibrator(val_scores, val_labels, method: str) -> CalibratedClassifierCV:
+def fit_calibrator(val_scores, val_labels, method: str) -> Calibrator:
     """Fit a calibrator on validation scores and labels. The inputs must be validation rows only."""
     if method not in CALIBRATION_METHODS:
         raise ValueError(f"method must be one of {CALIBRATION_METHODS}, got {method!r}")
-    X = _score_column(val_scores).reshape(-1, 1)
+    s = _score_column(val_scores)
     y = _labels(val_labels)
-    if len(y) != len(X):
+    if len(y) != len(s):
         raise ValueError("val_scores and val_labels must have the same length")
-    base = ScoreEstimator().fit(X, y)
-    calibrator = CalibratedClassifierCV(FrozenEstimator(base), method=method)
-    calibrator.fit(X, y)
-    return calibrator
+    if method == "isotonic":
+        model = IsotonicRegression(increasing=True, out_of_bounds="clip", y_min=0.0, y_max=1.0)
+        model.fit(s, y)
+    else:
+        logit = np.log(np.clip(s, _EPS, 1 - _EPS) / (1 - np.clip(s, _EPS, 1 - _EPS)))
+        model = LogisticRegression(C=1e6, max_iter=1000)
+        model.fit(logit.reshape(-1, 1), y)
+    return Calibrator(method=method, model=model)
 
 
-def calibrated_probabilities(calibrator: CalibratedClassifierCV, scores) -> np.ndarray:
+def calibrated_probabilities(calibrator: Calibrator, scores) -> np.ndarray:
     """P(fraud) from a fitted calibrator for the given raw scores."""
-    return calibrator.predict_proba(_score_column(scores).reshape(-1, 1))[:, 1]
+    return calibrator.transform(scores)
 
 
-def select_calibration(val_scores, val_labels) -> tuple[CalibratedClassifierCV, str, dict[str, float]]:
+def select_calibration(val_scores, val_labels) -> tuple[Calibrator, str, dict[str, float]]:
     """Fit isotonic and sigmoid calibrators on validation and keep the lower validation Brier score."""
     briers: dict[str, float] = {}
-    fitted: dict[str, CalibratedClassifierCV] = {}
+    fitted: dict[str, Calibrator] = {}
     for method in CALIBRATION_METHODS:
         calibrator = fit_calibrator(val_scores, val_labels, method)
         fitted[method] = calibrator
